@@ -1,0 +1,279 @@
+/* 0) Create and select the database */
+CREATE DATABASE IF NOT EXISTS ecommerce1
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+USE ecommerce1;
+
+/* 1) ADMINS */
+DROP TABLE IF EXISTS admins;
+CREATE TABLE admins (
+  id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name         VARCHAR(100) NOT NULL,
+  email        VARCHAR(190) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  role         ENUM('superadmin','manager','staff') DEFAULT 'manager',
+  is_active    TINYINT(1) NOT NULL DEFAULT 1,
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+/* 2) USERS */
+DROP TABLE IF EXISTS users;
+CREATE TABLE users (
+  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name          VARCHAR(120) NOT NULL,
+  email         VARCHAR(190) NOT NULL UNIQUE,
+  phone         VARCHAR(30),
+  password_hash VARCHAR(255) NOT NULL,
+  address_line1 VARCHAR(255),
+  address_line2 VARCHAR(255),
+  city          VARCHAR(120),
+  state         VARCHAR(120),
+  postal_code   VARCHAR(30),
+  country       VARCHAR(120),
+  is_active     TINYINT(1) NOT NULL DEFAULT 1,
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+/* 3) CATEGORIES (self-referencing for parent/child categories) */
+DROP TABLE IF EXISTS categories;
+CREATE TABLE categories (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(150) NOT NULL,
+  slug        VARCHAR(160) NOT NULL UNIQUE,
+  parent_id   INT UNSIGNED NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_categories_parent
+    FOREIGN KEY (parent_id) REFERENCES categories(id)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+/* 4) PRODUCTS */
+DROP TABLE IF EXISTS products;
+CREATE TABLE products (
+  id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  category_id  INT UNSIGNED NULL,
+  name         VARCHAR(200) NOT NULL,
+  slug         VARCHAR(210) NOT NULL UNIQUE,
+  description  TEXT,
+  price        DECIMAL(10,2) NOT NULL,
+  stock        INT NOT NULL DEFAULT 0,
+  image_url    VARCHAR(255),
+  status       ENUM('active','inactive','archived') NOT NULL DEFAULT 'active',
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_products_category (category_id),
+  INDEX idx_products_status (status),
+  FULLTEXT INDEX ft_products_search (name, description),
+  CONSTRAINT fk_products_category
+    FOREIGN KEY (category_id) REFERENCES categories(id)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+/* 5) CART (one row per user/product) */
+DROP TABLE IF EXISTS cart;
+CREATE TABLE cart (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id     INT UNSIGNED NOT NULL,
+  product_id  INT UNSIGNED NOT NULL,
+  quantity    INT NOT NULL DEFAULT 1,
+  added_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_cart_user_product (user_id, product_id),
+  INDEX idx_cart_user (user_id),
+  INDEX idx_cart_product (product_id),
+  CONSTRAINT fk_cart_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_cart_product
+    FOREIGN KEY (product_id) REFERENCES products(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+/* 6) ORDERS */
+DROP TABLE IF EXISTS orders;
+CREATE TABLE orders (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id         INT UNSIGNED NOT NULL,
+  status          ENUM('pending','paid','shipped','delivered','cancelled','refunded') DEFAULT 'pending',
+  payment_status  ENUM('unpaid','paid','failed','refunded') DEFAULT 'unpaid',
+  subtotal        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  shipping_fee    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  tax_amount      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  total_amount    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  notes           VARCHAR(500),
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_orders_user (user_id),
+  INDEX idx_orders_status (status),
+  CONSTRAINT fk_orders_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+/* 7) ORDER ITEMS */
+DROP TABLE IF EXISTS order_items;
+CREATE TABLE order_items (
+  id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id     INT UNSIGNED NOT NULL,
+  product_id   INT UNSIGNED NOT NULL,
+  product_name VARCHAR(200) NOT NULL,        -- snapshot at time of purchase
+  unit_price   DECIMAL(10,2) NOT NULL,
+  quantity     INT NOT NULL,
+  line_total   DECIMAL(10,2) AS (unit_price * quantity) STORED,
+  INDEX idx_oi_order (order_id),
+  INDEX idx_oi_product (product_id),
+  CONSTRAINT fk_oi_order
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_oi_product
+    FOREIGN KEY (product_id) REFERENCES products(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+/* 8) PAYMENTS */
+DROP TABLE IF EXISTS payments;
+CREATE TABLE payments (
+  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  order_id        INT UNSIGNED NOT NULL,
+  provider        VARCHAR(80) NOT NULL,         -- e.g., Razorpay/Stripe/COD
+  method          VARCHAR(80) NOT NULL,         -- e.g., card, upi, cod
+  amount          DECIMAL(10,2) NOT NULL,
+  status          ENUM('initiated','successful','failed','refunded') NOT NULL DEFAULT 'initiated',
+  transaction_id  VARCHAR(191) UNIQUE,
+  payload_json    JSON NULL,
+  paid_at         DATETIME NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_payments_order
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+/* ---- OPTIONAL SAMPLE DATA (for quick testing) ---- */
+INSERT INTO admins (name,email,password_hash,role) VALUES
+('Admin','admin@example.com','$2y$10$changemehash','superadmin');
+
+INSERT INTO users (name,email,password_hash,city,country) VALUES
+('Test User','user@example.com','$2y$10$changemehash','Hyderabad','India');
+
+INSERT INTO categories (name,slug) VALUES
+('Phones','phones'), ('Laptops','laptops'), ('Accessories','accessories');
+
+INSERT INTO products (category_id,name,slug,description,price,stock,image_url) VALUES
+(1,'Pixel 9','pixel-9','Android phone',69999,10,NULL),
+(2,'ThinkPad X1','thinkpad-x1','Premium laptop',149999,5,NULL),
+(3,'USB-C Cable','usb-c-cable','1m cable',499,100,NULL);
+
+/* ---- COMMON QUERIES (step-by-step examples) ---- */
+
+/* A) Fetch products with category */
+SELECT p.id, p.name, p.price, p.stock, c.name AS category
+FROM products p
+LEFT JOIN categories c ON c.id = p.category_id
+WHERE p.status = 'active'
+ORDER BY p.created_at DESC;
+
+/* B) Search products by keyword */
+SELECT id, name, price, stock
+FROM products
+WHERE MATCH(name, description) AGAINST ('+laptop' IN BOOLEAN MODE);
+
+/* C) Add to cart (insert or increase quantity) */
+-- Example: user_id = 1, product_id = 2, qty = 1
+INSERT INTO cart (user_id, product_id, quantity)
+VALUES (1, 2, 1)
+ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity);
+
+/* D) View a user's cart */
+SELECT c.product_id, p.name, p.price, c.quantity, (p.price * c.quantity) AS line_total
+FROM cart c
+JOIN products p ON p.id = c.product_id
+WHERE c.user_id = 1;
+
+/* E) Update stock (admin) */
+UPDATE products SET stock = 20 WHERE id = 3;  -- set absolute stock
+-- Or decrease after manual adjustment:
+UPDATE products SET stock = stock - 1 WHERE id = 3 AND stock >= 1;
+
+/* F) Create an order from a cart (transaction outline) */
+-- BEGIN
+START TRANSACTION;
+
+-- 1) Create order shell
+INSERT INTO orders (user_id, status, payment_status, subtotal, shipping_fee, tax_amount, total_amount)
+VALUES (1, 'pending', 'unpaid', 0, 0, 0, 0);
+SET @order_id = LAST_INSERT_ID();
+
+-- 2) Insert order items from the user's cart and snapshot names/prices
+INSERT INTO order_items (order_id, product_id, product_name, unit_price, quantity)
+SELECT
+  @order_id,
+  p.id,
+  p.name,
+  p.price,
+  c.quantity
+FROM cart c
+JOIN products p ON p.id = c.product_id
+WHERE c.user_id = 1;
+
+-- 3) Compute subtotal and totals
+UPDATE orders o
+JOIN (
+  SELECT order_id, SUM(unit_price * quantity) AS subtotal
+  FROM order_items
+  WHERE order_id = @order_id
+) x ON o.id = x.order_id
+SET o.subtotal = x.subtotal,
+    o.shipping_fee = 0.00,
+    o.tax_amount = ROUND(x.subtotal * 0.00, 2),   -- adjust tax if needed
+    o.total_amount = x.subtotal + o.shipping_fee + o.tax_amount;
+
+-- 4) Reduce product stock atomically (fail if any item would go negative)
+-- Lock rows then validate:
+UPDATE products p
+JOIN order_items oi ON oi.product_id = p.id AND oi.order_id = @order_id
+SET p.stock = p.stock - oi.quantity
+WHERE p.stock >= oi.quantity;
+
+-- Check that all rows were updated (stock was sufficient)
+SELECT COUNT(*) INTO @items FROM order_items WHERE order_id = @order_id;
+SELECT ROW_COUNT() INTO @affected;  -- rows updated in previous UPDATE
+-- If any line couldn't update (insufficient stock), rollback
+-- (php side should check this; raw SQL shown here)
+-- For MySQL client, simulate with a condition; otherwise handle in app.
+
+-- 5) Clear the user's cart
+DELETE FROM cart WHERE user_id = 1;
+
+COMMIT;
+-- END
+
+/* G) Record a payment (after gateway success) */
+INSERT INTO payments (order_id, provider, method, amount, status, transaction_id, paid_at)
+VALUES (@order_id, 'Razorpay', 'upi', (SELECT total_amount FROM orders WHERE id=@order_id),
+        'successful', 'rzp_txn_123456', NOW());
+
+UPDATE orders
+SET payment_status = 'paid', status = 'paid'
+WHERE id = @order_id;
+
+/* H) Useful reports */
+
+/* Orders with user and totals */
+SELECT o.id, u.name AS customer, o.status, o.payment_status, o.total_amount, o.created_at
+FROM orders o
+JOIN users u ON u.id = o.user_id
+ORDER BY o.created_at DESC;
+
+/* Inventory low-stock alert (<=5) */
+SELECT id, name, stock FROM products
+WHERE status='active' AND stock <= 5
+ORDER BY stock ASC;
+
+/* Category product counts */
+SELECT c.id, c.name, COUNT(p.id) AS product_count
+FROM categories c
+LEFT JOIN products p ON p.category_id = c.id
+GROUP BY c.id, c.name
+ORDER BY c.name;
